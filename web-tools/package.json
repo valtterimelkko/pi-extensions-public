@@ -1,0 +1,13 @@
+{
+  "name": "web-tools",
+  "version": "1.0.0",
+  "description": "Native TypeScript web search and fetch tools for Pi coding agent",
+  "main": "index.ts",
+  "keywords": ["pi-extension", "web-search", "web-fetch", "tools"],
+  "author": "",
+  "license": "MIT",
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": ">=0.57.0",
+    "@mariozechner/pi-ai": ">=0.57.0"
+  }
+}

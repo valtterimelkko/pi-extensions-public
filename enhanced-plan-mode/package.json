@@ -1,0 +1,15 @@
+{
+  "name": "enhanced-plan-mode",
+  "version": "1.0.0",
+  "description": "Enhanced planning mode for Pi coding agent with wave-based analysis, risk assessment, and kimi-planning workflow patterns",
+  "main": "index.ts",
+  "keywords": ["pi-extension", "planning", "workflow", "agent"],
+  "author": "",
+  "license": "MIT",
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": ">=0.57.0",
+    "@mariozechner/pi-tui": ">=0.57.0",
+    "@mariozechner/pi-ai": ">=0.57.0",
+    "@mariozechner/pi-agent-core": ">=0.57.0"
+  }
+}
