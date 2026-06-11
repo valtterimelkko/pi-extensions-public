@@ -17,7 +17,7 @@ I wanted Pi to behave less like a minimal coding harness and more like a configu
 
 These extensions were built for that purpose.
 
-They also pair naturally with **Pi Web UI**, but they are intended to be useful on their own as Pi extensions.
+They also pair naturally with **[Pi Web UI](https://github.com/valtterimelkko/pi-web-ui)**, but they are intended to be useful on their own as Pi extensions.
 
 ## Included extensions
 
@@ -34,7 +34,7 @@ They also pair naturally with **Pi Web UI**, but they are intended to be useful 
 
 ## Relationship to Pi Web UI
 
-These extensions complement Pi Web UI especially well:
+These extensions complement **[Pi Web UI](https://github.com/valtterimelkko/pi-web-ui)** especially well:
 - some status and widget flows are richer when these extensions are installed
 - Pi Web UI can still function without them, but the workflow feels more minimal
 
