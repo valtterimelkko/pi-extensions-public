@@ -27,10 +27,15 @@ They also pair naturally with **[Pi Web UI](https://github.com/valtterimelkko/pi
 - `goal-engine/` — autonomous multi-turn goal execution for Pi
 - `memory/` — persistent multi-layer memory for projects and sessions
 - `parallel-orchestrator/` — git worktree-based orchestration helpers
-- `subagent/` — safer delegated-agent execution wrapper
-- `subagent-evaluator/` — mandatory quality evaluation loop for subagent outputs
+- `subagent/` — the subagent **launcher**: delegate single/parallel/chained tasks to isolated agents; each run returns a `run_id`
+- `subagent-evaluator/` — the **post-hoc interrogation** companion to `subagent`: pass a `run_id` to re-engage the *same* subagent with pointed follow-up questions when its report was vague (it does not launch new work)
 - `web-tools/` — native TypeScript web search/fetch tools
 - `todo.ts` — simple in-session task tracking
+
+> **`subagent` and `subagent-evaluator` are a pair, not rivals.** `subagent` *launches*
+> a delegated agent and returns a `run_id`; `subagent-evaluator` (the `evaluated_subagent`
+> tool) *interrogates* that run afterwards. Always delegate with `subagent` first, then use
+> `evaluated_subagent` only when a report needs more depth.
 
 ## Relationship to Pi Web UI
 
