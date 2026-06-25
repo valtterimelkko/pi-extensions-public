@@ -19,7 +19,7 @@ import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import { StringEnum } from "@earendil-works/pi-ai";
-import { type ExtensionAPI, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, getAgentDir, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.js";
@@ -30,6 +30,63 @@ const COLLAPSED_ITEM_COUNT = 10;
 const SUBAGENT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const MAX_SUBAGENT_DEPTH = 5; // Prevent runaway nesting
 const SUBAGENT_DEPTH_ENV = "PI_SUBAGENT_DEPTH";
+
+// === Subagent run store ===
+// Every completed subagent run is persisted here so the `evaluated_subagent`
+// tool can re-engage the SAME subagent with follow-up questions AFTER the fact.
+// This is what makes `subagent` the launcher and `evaluated_subagent` a true
+// post-hoc interrogation tool, rather than two competing launchers.
+export interface SubagentRunRecord {
+	runId: string;
+	agent: string;
+	agentSource: string;
+	model?: string;
+	tools?: string[];
+	systemPrompt: string;
+	task: string;
+	cwd: string;
+	report: string;
+	toolTrail: string[];
+	rounds: { questions: string[]; answer: string }[];
+	createdAt: string;
+}
+
+function getRunStoreDir(): string {
+	const dir = path.join(getAgentDir(), "subagent-runs");
+	try {
+		fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+	} catch {
+		/* ignore */
+	}
+	return dir;
+}
+
+function generateRunId(): string {
+	return `sa_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function saveRunRecord(record: SubagentRunRecord): void {
+	try {
+		const safe = record.runId.replace(/[^\w.-]+/g, "");
+		fs.writeFileSync(path.join(getRunStoreDir(), `${safe}.json`), JSON.stringify(record), {
+			encoding: "utf-8",
+			mode: 0o600,
+		});
+	} catch {
+		/* best-effort; if persistence fails, follow-up interrogation is simply unavailable */
+	}
+}
+
+function buildToolTrail(messages: Message[]): string[] {
+	const trail: string[] = [];
+	for (const item of getDisplayItems(messages)) {
+		if (item.type === "toolCall") {
+			const argsStr = JSON.stringify(item.args ?? {});
+			trail.push(`${item.name} ${argsStr.length > 80 ? `${argsStr.slice(0, 80)}…` : argsStr}`);
+		}
+	}
+	return trail;
+}
 
 function formatTokens(count: number): string {
 	if (count < 1000) return count.toString();
@@ -158,6 +215,7 @@ interface SingleResult {
 	stopReason?: string;
 	errorMessage?: string;
 	step?: number;
+	runId?: string;
 }
 
 interface SubagentDetails {
@@ -434,6 +492,30 @@ async function runSingleAgent(
 		currentResult.exitCode = exitCode;
 		currentResult.hadFinalOutput = Boolean(getFinalOutput(currentResult.messages));
 		currentResult.diagnostics = currentResult.stderr;
+
+		// Persist this run so `evaluated_subagent` can interrogate the same
+		// subagent later. Best-effort: failure here never breaks the run.
+		try {
+			const runId = generateRunId();
+			saveRunRecord({
+				runId,
+				agent: agent.name,
+				agentSource: agent.source,
+				model: agent.model,
+				tools: agent.tools,
+				systemPrompt: agent.systemPrompt,
+				task,
+				cwd: cwd ?? defaultCwd,
+				report: getFinalOutput(currentResult.messages),
+				toolTrail: buildToolTrail(currentResult.messages),
+				rounds: [],
+				createdAt: new Date().toISOString(),
+			});
+			currentResult.runId = runId;
+		} catch {
+			/* ignore */
+		}
+
 		if (wasAborted) throw new Error("Subagent was aborted");
 		return currentResult;
 	} finally {
@@ -490,10 +572,11 @@ export default function (pi: ExtensionAPI) {
 		name: "subagent",
 		label: "Subagent",
 		description: [
-			"Delegate tasks to specialized subagents with isolated context.",
+			"Delegate a task to a specialized subagent that runs in its own isolated context.",
+			"This is the DEFAULT, primary way to delegate scouting, review, research, or implementation work.",
 			"Modes: single (agent + task), parallel (tasks array), chain (sequential with {previous} placeholder).",
-			'Default agent scope is "user" (from ~/.pi/agent/agents).',
-			'To enable project-local agents in .pi/agents, set agentScope: "both" (or "project").',
+			'Default agent scope is "user" (from ~/.pi/agent/agents). To enable project-local agents in .pi/agents, set agentScope: "both" (or "project").',
+			"Each run returns a run_id. If a subagent's report is vague, summarized, or missing detail, do NOT re-run from scratch — call the evaluated_subagent tool with that run_id to ask the same subagent pointed follow-up questions.",
 		].join(" "),
 		parameters: SubagentParams,
 
@@ -604,8 +687,12 @@ export default function (pi: ExtensionAPI) {
 					}
 					previousOutput = getFinalOutput(result.messages);
 				}
+				const lastStep = results[results.length - 1];
+				const chainHint = lastStep.runId
+					? `\n\n[subagent run_id: ${lastStep.runId}] — to interrogate the final step further, call evaluated_subagent with this run_id.`
+					: "";
 				return {
-					content: [{ type: "text", text: getFinalOutput(results[results.length - 1].messages) || "(no output)" }],
+					content: [{ type: "text", text: (getFinalOutput(lastStep.messages) || "(no output)") + chainHint }],
 					details: makeDetails("chain")(results),
 				};
 			}
@@ -682,13 +769,14 @@ export default function (pi: ExtensionAPI) {
 				const summaries = results.map((r) => {
 					const output = getFinalOutput(r.messages);
 					const preview = output.slice(0, 100) + (output.length > 100 ? "..." : "");
-					return `[${r.agent}] ${r.exitCode === 0 ? "completed" : "failed"}: ${preview || "(no output)"}`;
+					const idPart = r.runId ? ` (run_id: ${r.runId})` : "";
+					return `[${r.agent}]${idPart} ${r.exitCode === 0 ? "completed" : "failed"}: ${preview || "(no output)"}`;
 				});
 				return {
 					content: [
 						{
 							type: "text",
-							text: `Parallel: ${successCount}/${results.length} succeeded\n\n${summaries.join("\n\n")}`,
+							text: `Parallel: ${successCount}/${results.length} succeeded\n\n${summaries.join("\n\n")}\n\nTo probe any of these subagents further, call evaluated_subagent with its run_id.`,
 						},
 					],
 					details: makeDetails("parallel")(results),
@@ -717,8 +805,16 @@ export default function (pi: ExtensionAPI) {
 						isError: true,
 					};
 				}
+				const finalText =
+					getFinalOutput(result.messages) ||
+					(result.timedOut
+						? `Subagent timed out after ${result.timeoutMs / 1000} seconds. No final assistant report was produced.`
+						: "(no final assistant report produced)");
+				const followUpHint = result.runId
+					? `\n\n[subagent run_id: ${result.runId}]\nIf this report is vague, summarized, or missing detail, call evaluated_subagent with this run_id to ask the same subagent pointed follow-up questions.`
+					: "";
 				return {
-					content: [{ type: "text", text: getFinalOutput(result.messages) || (result.timedOut ? `Subagent timed out after ${result.timeoutMs / 1000} seconds. No final assistant report was produced.` : "(no final assistant report produced)") }],
+					content: [{ type: "text", text: finalText + followUpHint }],
 					details: makeDetails("single")([result]),
 				};
 			}
